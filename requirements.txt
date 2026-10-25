@@ -1,0 +1,6 @@
+# Shared Python 3.8 environment for both robots.
+cozmo[camera]==1.4.10
+cozmoclad==3.4.0
+numpy==1.24.4
+Pillow==10.4.0
+aiohttp==3.10.11

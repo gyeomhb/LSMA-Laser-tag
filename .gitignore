@@ -1,0 +1,40 @@
+# Python environments and caches
+.venv/
+.venv-*/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Generated recordings (images, labels, and metadata)
+/datasets/
+/dataset_cozmo/
+/datasets_misty4/
+
+# Local logs, robot responses, and PDF-reading dependencies
+*.log
+/misty-device-response.json
+/.tmp-pdf-reader/
+/tracking-preview.jpg
+/escape_calibration.json
+
+# Supplied reference PDFs contain local setup/network information
+/Cozmo.pdf
+/Misty.pdf
+/robot_tracking.pdf
+
+# Local environment configuration and editor files
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
