@@ -16,12 +16,12 @@ import cv2
 def draw_boundaries(frame):
     """Display Cozmo's movement area after marker detection (pixel coordinates)."""
     color = (0, 220, 255)
-    cv2.rectangle(frame, (50, 50), (900, 600), (0, 0, 0), 5)
-    cv2.rectangle(frame, (50, 50), (900, 600), color, 2)
+    cv2.rectangle(frame, (50, 50), (1000, 600), (0, 0, 0), 5)
+    cv2.rectangle(frame, (50, 50), (1000, 600), color, 2)
     for text, position in [
-        ("Cozmo boundary: X 50-900 | Y 50-600", (50, 35)),
+        ("Cozmo boundary: X 50-1000 | Y 50-600", (50, 35)),
         ("(50, 50)", (58, 72)),
-        ("(900, 600)", (760, 590)),
+        ("(1000, 600)", (850, 590)),
     ]:
         cv2.putText(frame, text, position, cv2.FONT_HERSHEY_SIMPLEX,
                     0.65, (0, 0, 0), 4, cv2.LINE_AA)

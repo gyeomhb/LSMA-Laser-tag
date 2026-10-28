@@ -2,7 +2,7 @@
 
 import math
 
-BOUNDS = (50, 900, 50, 600)
+BOUNDS = (50, 1000, 50, 600)
 MAX_POSITION_AGE = 0.5
 
 
@@ -23,6 +23,8 @@ def movement_block_reason(sample, elapsed, marker_id, bounds=BOUNDS):
             return "Invalid coordinates"
     except (KeyError, TypeError, ValueError):
         return "Invalid tracking data"
+    if bounds is None:
+        return None
     xmin, xmax, ymin, ymax = bounds
     if not (xmin < x < xmax and ymin < y < ymax):
         return "At/outside boundary - stopped (X {:.1f}, Y {:.1f})".format(x, y)

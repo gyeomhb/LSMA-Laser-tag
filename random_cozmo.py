@@ -11,6 +11,7 @@ import time
 import cozmo
 
 from dataset_recorder import DatasetRecorder
+from frame_rate import CAMERA_FPS
 from movement_limits import BOUNDS, movement_block_reason
 from tracking_panel import DEFAULT_TRACKING_URL, TrackingClient
 
@@ -22,7 +23,7 @@ def inner_bounds(margin):
     return xmin + margin, xmax - margin, ymin + margin, ymax - margin
 
 
-def choose_action(rng, speed=40, turn_speed=30):
+def choose_action(rng, speed=90, turn_speed=60):
     """Return a label, equivalent WASD keys, wheel commands, and duration."""
     action = rng.choice([
         ("forward", {"w"}, (speed, speed)),
@@ -105,7 +106,7 @@ async def main(robot, args):
             return
         if args.record:
             await robot.set_head_angle(cozmo.util.degrees(-5)).wait_for_completed()
-            recorder = DatasetRecorder(Path(__file__).parent / "dataset_cozmo")
+            recorder = DatasetRecorder(Path(__file__).parent / "dataset_cozmo", fps=CAMERA_FPS)
             # Add automation settings to the standard Cozmo session metadata.
             import json
             path = recorder.path / "metadata.json"
@@ -158,16 +159,16 @@ def parse_args():
     parser.add_argument("--tracking-url", default=DEFAULT_TRACKING_URL)
     parser.add_argument("--marker-id", type=int, default=5)
     parser.add_argument("--seconds", type=float, default=60)
-    parser.add_argument("--speed", type=float, default=40, help="Straight wheel speed in mm/s (1-60)")
-    parser.add_argument("--turn-speed", type=float, default=30, help="Turn wheel speed in mm/s (1-40)")
+    parser.add_argument("--speed", type=float, default=90, help="Straight wheel speed in mm/s (1-90)")
+    parser.add_argument("--turn-speed", type=float, default=60, help="Turn wheel speed in mm/s (1-60)")
     parser.add_argument("--margin", type=float, default=40, help="Stop buffer inside the boundary, in pixels")
     parser.add_argument("--seed", type=int)
     parser.add_argument("--record", action="store_true", help="Record camera images and active commands")
     args = parser.parse_args()
     if not math.isfinite(args.seconds) or args.seconds <= 0:
         parser.error("--seconds must be positive and finite")
-    if not 1 <= args.speed <= 60 or not 1 <= args.turn_speed <= 40:
-        parser.error("--speed must be 1-60 and --turn-speed must be 1-40")
+    if not 1 <= args.speed <= 90 or not 1 <= args.turn_speed <= 60:
+        parser.error("--speed must be 1-90 and --turn-speed must be 1-60")
     try:
         inner_bounds(args.margin)
     except ValueError as exc:

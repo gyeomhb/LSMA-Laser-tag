@@ -94,10 +94,10 @@ def wheels_for(coz, target, speed):
     if abs(error) > math.pi/2:
         direction = -1
         error = wrap(error - math.pi)
-    turn = max(-30, min(30, 35*error))
+    turn = max(-60, min(60, 70*error))
     forward = direction*speed*max(0, 1-abs(error)/0.8)
     # Image Y points down: clockwise turn => left wheel faster.
-    return tuple(max(-60, min(60, v)) for v in (forward+turn, forward-turn))
+    return tuple(max(-150, min(150, v)) for v in (forward+turn, forward-turn))
 
 
 def calibrate(url):
@@ -155,12 +155,12 @@ if __name__ == '__main__':
     parser.add_argument('--calibrate-left', action='store_true')
     parser.add_argument('--tracking-url', default=DEFAULT_TRACKING_URL)
     parser.add_argument('--seconds', type=float, default=10)
-    parser.add_argument('--speed', type=float, default=40)
+    parser.add_argument('--speed', type=float, default=90)
     args = parser.parse_args()
     if not math.isfinite(args.seconds) or not 0 < args.seconds <= 300:
         parser.error('--seconds must be between 0 and 300')
-    if not 1 <= args.speed <= 60:
-        parser.error('--speed must be between 1 and 60')
+    if not 1 <= args.speed <= 90:
+        parser.error('--speed must be between 1 and 90')
     if args.calibrate_left:
         calibrate(args.tracking_url)
     else:

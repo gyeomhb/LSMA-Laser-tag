@@ -14,8 +14,8 @@ from wasd_misty import FIELDS, MistyController, command_name, decode_frame, unwr
 
 class MistyTest(unittest.TestCase):
     def test_controls(self):
-        for keys, expected in [({"w"}, (10, 0)), ({"s"}, (-10, 0)),
-                               ({"a"}, (0, 10)), ({"d"}, (0, -10)),
+        for keys, expected in [({"w"}, (15, 0)), ({"s"}, (-15, 0)),
+                               ({"a"}, (0, 15)), ({"d"}, (0, -15)),
                                ({"w", "space"}, (0, 0)), ({"w", "s"}, (0, 0))]:
             self.assertEqual(velocities(keys), expected)
         self.assertEqual(command_name((10, 10)), "forward_left")

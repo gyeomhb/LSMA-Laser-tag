@@ -17,6 +17,8 @@ dist/
 /datasets/
 /dataset_cozmo/
 /datasets_misty4/
+/misty_screenshots/
+/cozmo_screenshots/
 
 # Local logs, robot responses, and PDF-reading dependencies
 *.log

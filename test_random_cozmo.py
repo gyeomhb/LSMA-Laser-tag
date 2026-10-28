@@ -13,14 +13,14 @@ def position(x=400, y=300, tag=5):
 
 class RandomPlanningTest(unittest.TestCase):
     def test_margin_and_actions(self):
-        self.assertEqual(inner_bounds(40), (90, 860, 90, 560))
+        self.assertEqual(inner_bounds(40), (90, 960, 90, 560))
         for value in (-1, 275, float("nan")):
             with self.assertRaises(ValueError):
                 inner_bounds(value)
         rng = random.Random(5)
         actions = [choose_action(rng) for _ in range(100)]
         self.assertTrue(all(0.2 <= action[3] <= 0.7 for action in actions))
-        self.assertTrue(all(max(abs(x) for x in action[2]) <= 40 for action in actions))
+        self.assertTrue(all(max(abs(x) for x in action[2]) <= 90 for action in actions))
         self.assertGreater(len({action[0] for action in actions}), 4)
 
 

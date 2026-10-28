@@ -9,6 +9,7 @@ from random_cozmo import inner_bounds
 
 class EscapeTests(unittest.TestCase):
     def test_forward_reverse_and_turn_direction(self):
+        self.assertEqual(wheels_for((400, 300, 0), (600, 300), 90), (90, 90))
         self.assertEqual(wheels_for((400, 300, math.pi), (200, 300), 40), (40, 40))
         left, right = wheels_for((400, 300, math.pi), (600, 300), 40)
         self.assertAlmostEqual(left, -40)

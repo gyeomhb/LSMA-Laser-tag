@@ -13,8 +13,8 @@ class MovementLimitsTest(unittest.TestCase):
         self.assertIsNone(movement_block_reason(self.sample(50.1, 599.9), 0, 5))
 
     def test_all_edges_and_outside_block(self):
-        for x, y in [(50, 300), (900, 300), (400, 50), (400, 600),
-                     (49, 300), (901, 300), (400, 49), (400, 601)]:
+        for x, y in [(50, 300), (1000, 300), (400, 50), (400, 600),
+                     (49, 300), (1001, 300), (400, 49), (400, 601)]:
             with self.subTest(x=x, y=y):
                 self.assertIn("boundary", movement_block_reason(self.sample(x, y), 0, 5))
 

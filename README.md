@@ -1,5 +1,8 @@
 # Robot keyboard control and dataset recording
 
+Cozmo uses odometry for position, initialized and corrected by overhead tag 5. Start with [STARTUP.md](STARTUP.md).
+Older waypoint and escape scripts are retained as references; the toggle uses timed movement.
+
 For everyday use, follow [Easy startup](STARTUP.md).
 
 Windows/Python controllers for Cozmo and Misty 4. Both provide WASD driving,
@@ -12,8 +15,14 @@ a live color camera view, and image/command dataset recording.
 | `wasd_cozmo.py` | Cozmo controller, color camera, and recording. Sets the head to 5 degrees below level at startup. |
 | `random_cozmo.py` | Short random movements for Cozmo with strict tracking checks, an inner boundary buffer, and optional image/command recording. |
 | `escape_cozmo.py` | Continuous escape steering using Cozmo tag 5, Misty tag 8, calibrated headings, and boundary checks. |
+| `waypoint_cozmo.py` | Uses fourteen fixed waypoints and drives toward randomly changing targets. |
+| `test_waypoint_cozmo.py` | Tests arrival-only switching, forward steering, target selection, and tracking-loss stops. |
 | `test_escape_cozmo.py` | Tests steering, escape path clearance, and stopping when tracking fails. |
 | `wasd_misty.py` | Misty controller using HTTP commands and a camera WebSocket. Defaults to `192.168.1.38`; accepts `--ip`. Rotates camera frames 90 degrees clockwise before displaying or saving them. |
+| `robot_startup.py` | Checks Misty and Cozmo connections and cameras; manages the Cozmo process. |
+| `cozmo_navigation.py` | Fuses Cozmo odometry with overhead tag 5 and checks the 15 cm edge margin. |
+| `timed_cozmo.py` | Drives forward at 90 mm/s for 5-10 seconds, then turns randomly left or right for 0.4-1.2 seconds. Supports manual and automatic edge reversal. |
+| `cozmo_waypoint_worker.py` | Private SDK process for the Misty window's Cozmo toggle. Stops Cozmo on OFF, shutdown, or lost parent heartbeat. |
 | `dataset_recorder.py` | Shared background writer for PNG images, CSV labels, and session metadata. Supports uncapped recording or an optional sampling rate. |
 | `jetson_camera_stream.py` | Runs on the Jetson with its existing OpenCV installation. Streams the overhead RealSense color camera and detects ArUco tags in image coordinates. |
 | `tracking_panel.py` | Shared coordinate panel. Polls the Jetson in a background thread and displays fresh per-tag X/Y pixel coordinates in both controllers. |
@@ -40,6 +49,8 @@ Local files that are excluded from Git:
 
 ## Escape from Misty
 
+For automatic waypoint movement instead, see [Cozmo waypoints](#cozmo-waypoints).
+
 The escape controller uses tags 5 and 8 to choose 140-pixel waypoints away from
 Misty and its estimated firing direction. It steers continuously, replans once
 per second, and checks tracking every 50 ms. It assumes Misty's laser stays aligned
@@ -56,18 +67,53 @@ With both robots facing image-left (toward X=50), calibrate once:
 Offsets are saved in local `escape_calibration.json`. Repeat calibration if a tag
 is remounted or the overhead camera orientation changes; normal robot turns do
 not require recalibration. Close Cozmo's WASD controller before running escape.
-Place Cozmo inside X 90–860, Y 90–560 and at least 85 pixels from Misty's tag.
+Place Cozmo inside X 90–960, Y 90–560 and at least 85 pixels from Misty's tag.
 For the first trial, keep Misty stationary and run:
 
 ```powershell
-.\.venv\Scripts\python.exe .\escape_cozmo.py --seconds 10 --speed 40
+.\.venv\Scripts\python.exe .\escape_cozmo.py --seconds 10 --speed 90
 ```
 
 Space, Esc, or Ctrl+C in the terminal stops the run. Missing/stale tags, boundary
 contact, pickup, charger detection, or proximity to Misty also stop movement.
-The full boundary is X 50–900, Y 50–600; the controller keeps a 40-pixel stopping
+The full boundary is X 50–1000, Y 50–600; the controller keeps a 40-pixel stopping
 buffer and selects waypoints with a 60-pixel buffer. WASD remains unrestricted.
 
+## Legacy Cozmo waypoints
+
+Close other Cozmo controllers. Start overhead tracking and keep the Kindle in SDK
+mode. This mode uses Cozmo tag 5 and its saved heading in `escape_calibration.json`.
+If calibration is missing or a tag/camera was remounted, perform the left-facing
+calibration described above first.
+
+```powershell
+.\.venv\Scripts\python.exe .\waypoint_cozmo.py
+```
+
+Running the command starts movement automatically. The code uses fourteen fixed points
+around the perimeter (X: 130, 335, 540, 745, 950; Y: 130, 280, 430, 530), with the six middle points omitted; there is no editor or saved-point file.
+Waypoint mode uses the actual boundary: X 50-1000, Y 50-600, with no additional inset.
+
+Cozmo drives at 90 mm/s and keeps its target until it arrives within 25 pixels.
+It immediately selects another target on arrival. There is no target timer.
+The next target excludes the previous point and its immediate horizontal,
+vertical, and diagonal neighbors. Earlier points can be revisited later.
+Cozmo brakes when switching targets, turns in place to face the target, then drives forward; it does not reverse
+toward waypoints. By default the run continues until stopped. Use `--seconds 60`
+only when you want an optional overall run limit.
+Steering finishes alignment within 8 degrees and only returns to turning above
+30 degrees. A 3-degree deadband ignores tiny heading changes, turn commands ramp
+smoothly, and near-180-degree turns keep one direction despite angle-wrap noise.
+Forward motion ramps up to the same 90 mm/s cruise speed.
+On arrival, the next target is selected immediately, but the stop command is held
+for at least 0.4 seconds. Turning starts only after fresh camera frames show the
+tag position staying within 3 pixels for at least 0.2 seconds. If it has not
+settled within 2 seconds, the run ends with motors stopped. Tracking and boundary
+checks remain active during braking.
+This is direct waypoint steering, without Misty avoidance or obstacle planning.
+
+Click the PowerShell terminal and press **Space**, **Esc**, or **Ctrl+C** to stop.
+Tracking loss, boundary contact, pickup, or charger detection also stops the run.
 ## Setup with uv
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if it is not
@@ -115,15 +161,15 @@ directly, so PowerShell activation is unnecessary.
 ## Random Cozmo movement
 
 Close the Cozmo WASD controller first. Keep the Kindle connected in SDK mode and
-the Jetson tracker running. Place Cozmo's tag 5 inside **X 90–860, Y 90–560**,
-the requested X 50–900 / Y 50–600 rectangle with a 40-pixel inner stopping buffer.
+the Jetson tracker running. Place Cozmo's tag 5 inside **X 90–960, Y 90–560**,
+the requested X 50–1000 / Y 50–600 rectangle with a 40-pixel inner stopping buffer.
 
 ```powershell
 .\.venv\Scripts\python.exe .\random_cozmo.py
 ```
 
 This chooses short random forward, reverse, turning, curved, and stopped segments
-for up to 60 seconds. Default straight speed is 40 mm/s and turn speed is 30 mm/s.
+for up to 60 seconds. Default straight speed is 90 mm/s and turn speed is 60 mm/s.
 Segments last 0.2–0.7 seconds, with position checks about every 20 ms against the
 latest tracker response. Tracking itself updates separately, about 10 times per second.
 
@@ -150,8 +196,43 @@ braking delays. Increasing `--margin` reserves more room.
 
 ## Run Misty 4
 
+Close other Cozmo controllers first. This window now manages both robots:
+Misty uses WASD and **Cozmo ON/OFF** toggles autonomous Cozmo movement.
+Startup checks Misty's API and camera and Cozmo's SDK connection and camera.
+Startup needs a fresh tag 5 observation from the overhead camera and the saved
+facing offset in `escape_calibration.json`. Tag 8 is not required.
+Cozmo must be on the floor, off its charger. The toggle starts OFF.
+Startup keeps the verified Misty camera socket open for the control window.
+If video is stuck, it stops the video service, waits five seconds for camera
+release, then starts it on a fresh WebSocket port and verifies an image before
+continuing. It tries up to two fresh ports if needed; the chosen port is automatic.
+
+ON drives forward at 90 mm/s for a random 5-10 seconds, then turns left or right
+for 0.4-1.2 seconds and repeats. It uses estimated position to reverse near arena edges; it does not detect obstacles.
+Press R in the Misty window while Cozmo is ON to reverse its travel direction
+and start a new random 5-10 second drive. R also interrupts a turn. Each press
+switches forward/backward; holding R does not repeat. Random turns continue.
+The yellow box X=50-1000, Y=50-600 represents 2050 x 1200 mm.
+`cozmo_navigation.py` initializes position and heading from tag 5, then applies
+SDK odometry changes continuously. Fresh tag readings gently correct drift;
+stale, duplicate, ambiguous, or large outlier readings are ignored.
+Tag loss after initialization does not interrupt movement.
+Within 150 mm of an edge, outward travel triggers the same reversal as R,
+with a fresh 5-10 second timer. Inward travel is allowed even outside the box.
+This approximate scale and odometry do not guarantee exact containment.
+An SDK pose-origin reset needs fresh tracking to re-anchor; otherwise Cozmo stops
+with an explicit reset error rather than applying a false position jump.
+OFF, Space, closing the window, pickup, or a lost controller heartbeat stops Cozmo.
+
+To check connections without opening controls or driving:
+
+```powershell
+.\.venv\Scripts\python.exe .\wasd_misty.py --check-only
+```
+
 Turn on Misty and connect the PC to a network that can reach the robot.
-Misty uses the network directly; it does not need the Kindle or ADB.
+Misty uses the network directly. The integrated Cozmo control requires the Kindle
+connected over USB with the Cozmo app in SDK mode.
 
 ```powershell
 .\.venv\Scripts\python.exe .\wasd_misty.py
@@ -163,7 +244,10 @@ The default address is `192.168.1.38`. Override it when the robot's IP changes:
 .\.venv\Scripts\python.exe .\wasd_misty.py --ip 192.168.1.38
 ```
 
-The controller uses HTTP port 80 and camera WebSocket port 5678. It connects by
+The controller uses HTTP port 80. It tries the existing camera WebSocket on port
+5678, then uses a fresh port between 10000 and 60000 when restarting video to
+avoid Misty's intermittent port-reuse failures. Recording metadata includes the
+actual port. It connects by
 IP; the returned serial is displayed and saved as metadata, not used to restrict
 connections. It requests 640×480 color frames and rotates them clockwise, giving
 480×640 saved images when that requested stream size is returned. It leaves the
@@ -171,17 +255,17 @@ head angle unchanged.
 
 Close an existing controller before starting another controller for the same robot.
 
-To run both at once from the project folder:
+To drive Misty while Cozmo runs timed random movement, open the integrated controller:
 
 ```powershell
-Start-Process .\.venv\Scripts\python.exe -ArgumentList '.\wasd_cozmo.py'
-Start-Process .\.venv\Scripts\python.exe -ArgumentList '.\wasd_misty.py'
+.\.venv\Scripts\python.exe .\wasd_misty.py
 ```
 
-Both processes share the same installed libraries but maintain separate robot
-connections. WASD controls the focused window; both cameras can record concurrently.
+Turn on **Cozmo ON/OFF**. Do not run another Cozmo controller at the same
+time. Misty's recording button records Misty; the Cozmo worker does not record
+Cozmo images.
 
-## Overhead camera and ArUco tracking
+## Legacy overhead camera and ArUco tracking
 
 The overhead RealSense L515 is connected to the Jetson at `192.168.1.37`.
 The camera server runs on the Jetson, independently of both robot controllers.
@@ -223,34 +307,6 @@ installed Python RealSense SDK did not enumerate the L515 during testing.
 Stop this server before trying the ROS camera driver. The feed is available to
 devices that can reach the Jetson's local network address.
 
-### Coordinates in the WASD windows
-
-Both controllers show a live **Overhead tracking** panel. Cozmo defaults to tag
-**5**, and Misty defaults to tag **8**, as attached to the robots in this setup.
-You can change either selection in the **This robot's tag** dropdown.
-The origin is the top-left corner, X increases rightward, and Y increases downward.
-These are pixels, not meters or coordinates in the robot's onboard camera.
-
-After identifying the tag attached to your robot, show only that tag, for example:
-
-```powershell
-.\.venv\Scripts\python.exe .\wasd_cozmo.py --marker-id 5
-.\.venv\Scripts\python.exe .\wasd_misty.py --marker-id 8
-```
-
-Tag 5 is assigned to Cozmo; tag 8 is assigned to Misty. You can override
-the tracker with `--tracking-url http://192.168.1.37:8088/status`.
-The panel updates about 10 times per second. Stale, missing, or unreachable
-tracking is reported instead of displaying old coordinates as current.
-The tag dropdown controls which coordinates are displayed. Manual WASD movement
-does not depend on the selected tag, detected position, or overhead tracking
-availability. The WASD controllers and their coordinate panel have no boundary
-checks or boundary messages. Coordinates are displayed only; the existing robot
-dataset CSV formats are unchanged.
-
-Boundary checks remain in `random_cozmo.py` through `movement_limits.py`, for
-autonomous movement only. See **Random Cozmo movement** for its operating area
-and stop conditions.
 
 ## Controls
 
@@ -267,8 +323,10 @@ Click the controller window, then hold the keys:
 | Esc or close window | Stop, finish saving, and exit |
 | Start recording / Stop recording | Start or finish a dataset session |
 
-Cozmo drives straight at 60 mm/s, with turning mixed into individual wheel speeds.
-Misty uses 10% linear/angular velocity and refreshes 500 ms timed commands while
+Cozmo drives straight at 90 mm/s, with a 60 mm/s turning component mixed into
+individual wheel speeds (up to 150 mm/s during curves). Escape mode defaults to
+90 mm/s, with a 60 mm/s maximum turning component and a 150 mm/s wheel cap.
+Misty uses 20% linear / 15% angular velocity and refreshes 500 ms timed commands while
 keys are held. Misty stops sending movement when its camera feed is stale.
 Commands and their completion depend on the robot and network connection.
 
@@ -289,8 +347,10 @@ datasets_misty4/                   # Misty
     metadata.json
 ```
 
-The controllers record every received frame, including stopped frames, without
-an application FPS cap. Actual FPS depends on camera delivery, network, decoding,
+Both robot controllers cap recording and camera previews at 15 FPS, including
+stopped frames. Screenshot previews also use this cap; Space still saves one picture.
+This is an application limit, not a camera hardware setting. Slower sources are
+not padded with duplicate frames. Actual FPS depends on camera delivery, network, decoding,
 and disk speed. The window shows the average saved FPS and writer-queue drop count;
 this count does not include frames lost before reaching the application. A bounded
 background queue prevents disk writes from blocking driving controls.
@@ -336,7 +396,7 @@ These tests do not connect to or move a robot:
   Python 3.8 rather than a newer system Python.
 - **Misty connection fails:** verify the current IP and network access. Try
   opening `http://192.168.1.38` in a browser, substituting the current IP.
-- **Misty camera fails:** check port 5678 and close other camera controllers;
+- **Misty camera fails:** close other camera controllers; startup prints the chosen video port;
   close and reopen this controller after resolving the problem.
 - **Keys do nothing:** click the control window. For Misty, wait for fresh camera
   frames. Release Space and press the movement keys again.

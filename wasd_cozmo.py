@@ -2,7 +2,6 @@
 
 import asyncio
 import argparse
-from functools import partial
 import tkinter as tk
 import time
 from pathlib import Path
@@ -10,18 +9,18 @@ from pathlib import Path
 import cozmo
 from PIL import Image, ImageTk
 from dataset_recorder import DatasetRecorder
-from tracking_panel import DEFAULT_TRACKING_URL, TrackingPanel
+from frame_rate import CAMERA_FPS, FrameLimiter
 
 
 def wheel_speeds(keys):
     if "space" in keys:
         return 0, 0
-    forward = 60 * (("w" in keys) - ("s" in keys))
-    turn = 40 * (("d" in keys) - ("a" in keys))
+    forward = 90 * (("w" in keys) - ("s" in keys))
+    turn = 60 * (("d" in keys) - ("a" in keys))
     return forward + turn, forward - turn
 
 
-async def main(robot: cozmo.robot.Robot, tracking_url=DEFAULT_TRACKING_URL, marker_id=5):
+async def main(robot: cozmo.robot.Robot):
     window = tk.Tk()
     window.title("Cozmo WASD control + camera")
     window.geometry("680x820")
@@ -44,7 +43,7 @@ async def main(robot: cozmo.robot.Robot, tracking_url=DEFAULT_TRACKING_URL, mark
         nonlocal recorder
         if recorder is None:
             try:
-                recorder = DatasetRecorder(Path(__file__).parent / "dataset_cozmo")
+                recorder = DatasetRecorder(Path(__file__).parent / "dataset_cozmo", fps=CAMERA_FPS)
                 record_button.configure(text="Stop recording")
             except OSError as exc:
                 recording_status.set("Cannot record: " + str(exc))
@@ -62,7 +61,6 @@ async def main(robot: cozmo.robot.Robot, tracking_url=DEFAULT_TRACKING_URL, mark
                               takefocus=False)
     record_button.pack()
     tk.Label(window, textvariable=recording_status, wraplength=640).pack(pady=6)
-    tracking = TrackingPanel(window, tracking_url, marker_id)
     camera_view = tk.Label(window, text="Waiting for Cozmo's camera...",
                            bg="black", fg="white")
     camera_view.pack(fill="both", expand=True, padx=20, pady=(0, 20))
@@ -97,6 +95,7 @@ async def main(robot: cozmo.robot.Robot, tracking_url=DEFAULT_TRACKING_URL, mark
     window.protocol("WM_DELETE_WINDOW", close)
     previous = None
     previous_image = None
+    preview_rate = FrameLimiter()
     stream_was_enabled = robot.camera.image_stream_enabled
     color_was_enabled = robot.camera.color_image_enabled
     try:
@@ -126,10 +125,10 @@ async def main(robot: cozmo.robot.Robot, tracking_url=DEFAULT_TRACKING_URL, mark
                     applied_speeds = (0, 0)
                 else:
                     saved_fps = recorder.count / max(time.monotonic() - recorder.started_at, 0.001)
-                    recording_status.set("RECORDING: {} saved | {} dropped | {:.1f} avg FPS | uncapped".format(
+                    recording_status.set("RECORDING: {} saved | {} dropped | {:.1f} avg FPS | 15 FPS cap".format(
                         recorder.count, recorder.dropped, saved_fps))
             camera_image = robot.world.latest_image
-            if running and camera_image is not None and camera_image is not previous_image:
+            if running and camera_image is not None and camera_image is not previous_image and preview_rate.ready():
                 frame = camera_image.raw_image.copy()
                 frame.thumbnail((640, 480), Image.Resampling.BILINEAR)
                 photo = ImageTk.PhotoImage(frame, master=window)
@@ -148,15 +147,12 @@ async def main(robot: cozmo.robot.Robot, tracking_url=DEFAULT_TRACKING_URL, mark
                 if recorder is not None:
                     recorder.close()
             finally:
-                tracking.close()
                 window.destroy()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tracking-url", default=DEFAULT_TRACKING_URL)
-    parser.add_argument("--marker-id", type=int, default=5, help="This robot's ArUco marker ID (default: 5)")
     args = parser.parse_args()
     # Do not move off the charger automatically when opening the controller.
     cozmo.robot.Robot.drive_off_charger_on_connect = False
-    cozmo.run_program(partial(main, tracking_url=args.tracking_url, marker_id=args.marker_id))
+    cozmo.run_program(main)

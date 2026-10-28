@@ -1,4 +1,4 @@
-"""Misty 4: WASD, color camera, and uncapped image/command recording.
+"""Misty 4: WASD, color camera, and image/command recording capped at 15 FPS.
 
 Run with .venv/Scripts/python.exe wasd_misty.py.
 Labels describe requested/acknowledged commands, not measured motion.
@@ -18,7 +18,8 @@ import aiohttp
 from PIL import Image, ImageTk
 
 from dataset_recorder import DatasetRecorder
-from tracking_panel import DEFAULT_TRACKING_URL, TrackingPanel
+from frame_rate import CAMERA_FPS, FrameLimiter
+from robot_startup import preflight, open_misty_camera
 
 DEFAULT_IP = "192.168.1.38"
 FIELDS = ["image", "frame_number", "received_unix_s", "keys", "requested_command",
@@ -29,7 +30,7 @@ FIELDS = ["image", "frame_number", "received_unix_s", "keys", "requested_command
 def velocities(keys):
     if "space" in keys:
         return 0, 0
-    return 10 * (("w" in keys) - ("s" in keys)), 10 * (("a" in keys) - ("d" in keys))
+    return 15 * (("w" in keys) - ("s" in keys)), 15 * (("a" in keys) - ("d" in keys))
 
 
 def command_name(values):
@@ -70,22 +71,33 @@ def decode_frame(payload):
 
 
 class MistyController:
-    def __init__(self, ip, tracking_url=DEFAULT_TRACKING_URL, marker_id=8):
+    def __init__(self, ip, cozmo=None):
         self.ip = ip
+        self.cozmo = cozmo
+        self.cozmo_tasks = []
+        self.cozmo_pending = False
         self.window = tk.Tk()
         self.window.title("Misty 4 - WASD + camera + dataset")
-        self.window.geometry("780x810")
-        tk.Label(self.window, text="Misty 4", font=("Segoe UI", 20)).pack(pady=10)
-        tk.Label(self.window, text="Hold W/S: forward/backward    A/D: left/right\n"
-                 "Space: stop    Esc: quit    Release keys or switch windows to stop").pack()
+        self.window.minsize(780, 1)
         self.connection = tk.StringVar(value="Connecting to " + ip)
         tk.Label(self.window, textvariable=self.connection, wraplength=740).pack(pady=8)
-        self.record_button = tk.Button(self.window, text="Start recording", state="disabled",
+        controls = tk.Frame(self.window)
+        controls.pack()
+        self.record_button = tk.Button(controls, text="Start recording", state="disabled",
                                        takefocus=False, command=self.toggle_recording)
-        self.record_button.pack()
+        self.record_button.grid(row=0, column=1, padx=8)
         self.record_status = tk.StringVar(value="Recording off")
         tk.Label(self.window, textvariable=self.record_status, wraplength=740).pack(pady=8)
-        self.tracking = TrackingPanel(self.window, tracking_url, marker_id)
+        self.cozmo_enabled = tk.BooleanVar(value=False)
+        self.cozmo_toggle = tk.Checkbutton(controls, text="Cozmo OFF",
+            variable=self.cozmo_enabled, command=self.toggle_cozmo, takefocus=False,
+            indicatoron=False,
+            state='normal' if cozmo is not None else 'disabled')
+        if cozmo is not None:
+            self.cozmo_toggle.grid(row=0, column=0, padx=8)
+        self.cozmo_status = tk.StringVar(value='Cozmo ready - OFF' if cozmo else 'Cozmo unavailable')
+        if cozmo is not None:
+            tk.Label(self.window, textvariable=self.cozmo_status, wraplength=740).pack()
         self.camera_label = tk.Label(self.window, text="Waiting for camera...", bg="black", fg="white")
         self.camera_label.pack(fill="both", expand=True, padx=15, pady=15)
         self.keys = set()
@@ -101,7 +113,7 @@ class MistyController:
         self.ack_monotonic = 0
         self.in_flight = False
         self.serial = None
-        self.stream_started = False
+        self.stream_started = getattr(cozmo, 'misty_stream_ready', False)
         self.session = None
         self.save_tasks = []
         self.window.bind("<KeyPress>", self.press)
@@ -113,15 +125,63 @@ class MistyController:
         key = event.keysym.lower()
         if key == "escape":
             self.close()
+        elif key == 'r':
+            if key not in self.keys and self.cozmo is not None and self.cozmo_enabled.get():
+                self.keys.add(key)
+                self.cozmo_tasks.append(asyncio.create_task(self.reverse_cozmo()))
         elif key in {"w", "a", "s", "d", "space"}:
             if key == "space":
                 self.keys.clear()
+                if getattr(self, 'cozmo', None) is not None:
+                    self.cozmo_enabled.set(False)
+                    self.toggle_cozmo()
             if "space" not in self.keys and self.connected:
                 self.keys.add(key)
 
     def close(self):
         self.keys.clear()
         self.running = False
+
+    def toggle_cozmo(self):
+        self.cozmo_pending = True
+        self.cozmo_toggle.configure(text='Cozmo ON' if self.cozmo_enabled.get() else 'Cozmo OFF')
+        self.cozmo_tasks.append(asyncio.create_task(self.set_cozmo(self.cozmo_enabled.get())))
+
+    async def set_cozmo(self, enabled):
+        try:
+            await self.cozmo.send('start' if enabled else 'stop')
+            self.cozmo_status.set('Cozmo starting...' if enabled else 'Cozmo stopping...')
+        except Exception as exc:
+            self.cozmo_pending = False
+            self.cozmo_enabled.set(False)
+            self.cozmo_toggle.configure(text='Cozmo OFF')
+            self.cozmo_status.set('Cozmo: ' + str(exc))
+
+    async def reverse_cozmo(self):
+        try:
+            await self.cozmo.send('reverse')
+        except Exception as exc:
+            self.cozmo_status.set('Cozmo: ' + str(exc))
+
+    def update_cozmo(self):
+        if self.cozmo is None:
+            return
+        while not self.cozmo.events.empty():
+            event = self.cozmo.events.get_nowait()
+            kind = event['event']
+            if kind == 'running':
+                self.cozmo_pending = False
+                self.cozmo_status.set('Cozmo running - random turns / 5-10 sec / edge reversal')
+            elif kind in ('stopped', 'error'):
+                self.cozmo_pending = False
+                self.cozmo_enabled.set(False)
+                self.cozmo_status.set(event.get('message', 'Cozmo stopped - OFF'))
+        # Cozmo's control is independent of Misty's camera. Never lock out OFF
+        # while waiting for the worker to acknowledge a start/stop command.
+        self.cozmo_toggle.configure(
+            text='Cozmo ON' if self.cozmo_enabled.get() else 'Cozmo OFF',
+            state='normal' if not self.cozmo.error or self.cozmo_enabled.get() or self.cozmo_pending else 'disabled')
+        self.cozmo_tasks = [task for task in self.cozmo_tasks if not task.done()]
 
     async def request(self, method, path, payload=None, timeout=3):
         async with self.session.request(method, "http://" + self.ip + "/api/" + path,
@@ -169,8 +229,8 @@ class MistyController:
                 return
             metadata = {
                 "schema_version": 1, "robot": "Misty 4", "serial": self.serial, "ip": self.ip,
-                "sampling": "every received frame", "target_fps": None, "color": True,
-                "camera_transport": "websocket", "stream_port": 5678,
+                "sampling": "rate limited", "target_fps": CAMERA_FPS, "color": True,
+                "camera_transport": "websocket", "stream_port": getattr(self, 'misty_port', getattr(self.cozmo, 'misty_port', 5678)),
                 "requested_width": 640, "requested_height": 480,
                 "image_rotation_clockwise_degrees": 90,
                 "image_format": "PNG; decoded stream frame, no resizing",
@@ -181,7 +241,7 @@ class MistyController:
             }
             try:
                 self.recorder = DatasetRecorder(Path(__file__).parent / "datasets_misty4",
-                                                metadata=metadata, fields=FIELDS)
+                                                fps=CAMERA_FPS, metadata=metadata, fields=FIELDS)
             except OSError as exc:
                 self.record_status.set("Cannot record: " + str(exc))
                 return
@@ -213,8 +273,10 @@ class MistyController:
 
     async def camera_loop(self):
         try:
-            async with self.session.ws_connect("ws://" + self.ip + ":5678", receive_timeout=8,
-                                                max_msg_size=16 * 1024 * 1024) as socket:
+            socket = getattr(self, 'misty_socket', getattr(self.cozmo, 'misty_socket', None))
+            if socket is None:
+                socket = await open_misty_camera(self.session, self.ip)
+            async with socket:
                 async for message in socket:
                     if not self.running or not self.connected:
                         break
@@ -241,23 +303,26 @@ class MistyController:
         info = await self.request("GET", "device")
         self.serial = str(info.get("serialNumber", ""))
         await self.send_drive((0, 0))
-        await self.request("POST", "videostreaming/start", {
-            "Port": 5678, "Rotation": 0, "Width": 640, "Height": 480,
-            "Quality": 90, "Overlay": False}, timeout=20)
+        if not getattr(self, 'stream_started', False):
+            await self.request("POST", "videostreaming/start", {
+                "Port": 5678, "Rotation": 0, "Width": 640, "Height": 480,
+                "Quality": 90, "Overlay": False}, timeout=20)
         self.stream_started = True
         self.connected = True
-        self.connection.set("Connected: {} | serial {} | 10% driving speed".format(self.ip, self.serial))
+        self.connection.set("Connected: {} | 15% drive / 15% turn".format(self.ip))
         self.record_button.configure(state="normal")
-        print("Connected to Misty serial", self.serial, flush=True)
+        print("Connected to Misty at", self.ip, flush=True)
 
     async def run(self):
         tasks = []
         shown = None
+        preview_rate = FrameLimiter()
         async with aiohttp.ClientSession(trust_env=False) as self.session:
             connection_task = asyncio.create_task(self.connect())
             try:
                 while self.running:
                     self.window.update()
+                    self.update_cozmo()
                     if connection_task is not None and connection_task.done():
                         try:
                             connection_task.result()
@@ -266,7 +331,7 @@ class MistyController:
                             self.fail("Connection failed: " + str(exc))
                             print("Connection failed:", repr(exc), flush=True)
                         connection_task = None
-                    if self.frame is not None and self.frame is not shown:
+                    if self.frame is not None and self.frame is not shown and preview_rate.ready():
                         preview = self.frame.copy()
                         preview.thumbnail((740, 550), Image.Resampling.BILINEAR)
                         photo = ImageTk.PhotoImage(preview, master=self.window)
@@ -279,11 +344,17 @@ class MistyController:
                             self.toggle_recording()
                         else:
                             rate = self.recorder.count / max(time.monotonic() - self.recorder.started_at, 0.001)
-                            self.record_status.set("RECORDING: {} saved | {} dropped | {:.1f} avg FPS | uncapped".format(
+                            self.record_status.set("RECORDING: {} saved | {} dropped | {:.1f} avg FPS | 15 FPS cap".format(
                                 self.recorder.count, self.recorder.dropped, rate))
                     await asyncio.sleep(0.02)
             finally:
                 self.keys.clear()
+                if self.cozmo is not None:
+                    for task in self.cozmo_tasks:
+                        task.cancel()
+                    await asyncio.gather(*self.cozmo_tasks, return_exceptions=True)
+                    with suppress(Exception):
+                        await self.cozmo.send('stop')
                 if connection_task is not None:
                     tasks.append(connection_task)
                 for task in tasks:
@@ -295,17 +366,44 @@ class MistyController:
                 if self.stream_started:
                     with suppress(Exception):
                         await self.request("POST", "videostreaming/stop", {})
+                        if self.cozmo is not None:
+                            self.cozmo.misty_stream_ready = False
                 if self.recorder is not None:
                     await asyncio.get_running_loop().run_in_executor(None, self.recorder.close)
                 await asyncio.gather(*self.save_tasks, return_exceptions=True)
-                self.tracking.close()
                 self.window.destroy()
+
+
+async def launch(args):
+    cozmo = None
+    try:
+        cozmo = await preflight(args.ip, decode_frame, unwrap)
+        if getattr(args, 'check_only', False):
+            return
+        await MistyController(args.ip, cozmo=cozmo).run()
+    finally:
+        if cozmo is not None:
+            await cozmo.close()
+            if getattr(cozmo, 'misty_socket', None) is not None:
+                await cozmo.misty_socket.close()
+            if getattr(cozmo, 'misty_session', None) is not None:
+                await cozmo.misty_session.close()
+            # Covers check-only mode and failures before the window owns cleanup.
+            if getattr(cozmo, 'misty_stream_ready', False):
+                async with aiohttp.ClientSession() as session:
+                    with suppress(Exception):
+                        async with session.post('http://'+args.ip+'/api/videostreaming/stop',
+                                                json={}, timeout=aiohttp.ClientTimeout(total=3)):
+                            pass
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ip", default=DEFAULT_IP)
-    parser.add_argument("--tracking-url", default=DEFAULT_TRACKING_URL)
-    parser.add_argument("--marker-id", type=int, default=8, help="Show only this robot's ArUco marker ID (default: 8)")
+    parser.add_argument("--check-only", action="store_true", help="Check all robot connections without opening controls")
     args = parser.parse_args()
-    asyncio.run(MistyController(args.ip, args.tracking_url, args.marker_id).run())
+    try:
+        asyncio.run(launch(args))
+    except Exception as exc:
+        print('Startup/controller failed:', str(exc) or type(exc).__name__, flush=True)
+        raise SystemExit(1)

@@ -62,7 +62,7 @@ class DatasetRecorder:
 
     def offer_frame(self, frame, row):
         now = time.monotonic()
-        if self.closed or self.error or now - self.last_time < self.interval:
+        if self.closed or self.error or now - self.last_time + 1e-9 < self.interval:
             return
         self.last_time = now
         try:
