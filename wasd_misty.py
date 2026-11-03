@@ -20,13 +20,14 @@ from PIL import Image, ImageTk
 from dataset_recorder import DatasetRecorder
 from recording_position import POSITION_FIELDS, COZMO_POSITION_FIELDS, misty_positions
 from tracking_panel import DEFAULT_TRACKING_URL, TrackingClient
+from overhead_recorder import OVERHEAD_FIELDS, OverheadCamera
 from frame_rate import CAMERA_FPS, FrameLimiter
 from robot_startup import preflight, open_misty_camera
 
 DEFAULT_IP = "192.168.1.38"
 FIELDS = ["image", "frame_number", "received_unix_s", "keys", "requested_command",
           "command", "linear_velocity_percent", "angular_velocity_percent",
-          "command_sent_unix_s", "command_ack_unix_s", "command_state"] + POSITION_FIELDS + COZMO_POSITION_FIELDS
+          "command_sent_unix_s", "command_ack_unix_s", "command_state"] + POSITION_FIELDS + COZMO_POSITION_FIELDS + OVERHEAD_FIELDS
 
 
 def velocities(keys):
@@ -311,13 +312,17 @@ class MistyController:
                     received = time.time()
                     self.frame_number += 1
                     row = self.label(received)
+                    overhead = None
+                    if self.recorder is not None and getattr(self, 'overhead_camera', None) is not None:
+                        overhead, overhead_row = self.overhead_camera.snapshot()
+                        row.update(overhead_row)
                     frame = decode_frame(message.data).transpose(Image.Transpose.ROTATE_270)
                     self.frame = frame
                     if self.frame_number == 1:
                         print("Camera frame received:", frame.size, frame.mode, flush=True)
                     self.last_frame_at = time.monotonic()
                     if self.recorder is not None:
-                        self.recorder.offer_frame(frame, row)
+                        self.recorder.offer_frame(frame, row, overhead=overhead)
             if self.running:
                 self.fail("Camera stream closed")
         except Exception as exc:
@@ -340,6 +345,7 @@ class MistyController:
     async def run(self):
         tasks = []
         self.position_tracker = TrackingClient(DEFAULT_TRACKING_URL)
+        self.overhead_camera = OverheadCamera(DEFAULT_TRACKING_URL.rsplit('/', 1)[0] + '/snapshot.jpg')
         shown = None
         preview_rate = FrameLimiter()
         async with aiohttp.ClientSession(trust_env=False) as self.session:
@@ -397,6 +403,7 @@ class MistyController:
                     await asyncio.get_running_loop().run_in_executor(None, self.recorder.close)
                 await asyncio.gather(*self.save_tasks, return_exceptions=True)
                 self.position_tracker.close()
+                self.overhead_camera.close()
                 self.window.destroy()
 
 

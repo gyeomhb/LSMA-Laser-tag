@@ -32,6 +32,8 @@ class DatasetRecorder:
             raise ValueError("fps must be positive or None for every camera frame")
         self.path = Path(root) / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
         (self.path / "images").mkdir(parents=True)
+        if fields and 'overhead_image' in fields:
+            (self.path / 'overhead_images').mkdir()
         self.interval = 0 if fps is None else 1 / fps
         self.started_at = time.monotonic()
         self.last_time = float("-inf")
@@ -52,6 +54,11 @@ class DatasetRecorder:
         if fields and 'position_x_px' in fields:
             metadata = dict(metadata, **POSITION_METADATA)
             metadata['schema_version'] = 2
+        if fields and 'overhead_image' in fields:
+            metadata = dict(metadata, schema_version=3,
+                overhead_alignment='Latest completed overhead snapshot at Misty image receipt; not synchronized exposures',
+                overhead_format='JPEG from overhead snapshot endpoint, including its overlays',
+                overhead_max_receipt_age_s=0.5)
         (self.path / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         self.thread = threading.Thread(target=self._write, daemon=True)
         self.thread.start()
@@ -69,13 +76,13 @@ class DatasetRecorder:
             row.update(position)
         self.offer_frame(image.raw_image, row)
 
-    def offer_frame(self, frame, row):
+    def offer_frame(self, frame, row, overhead=None):
         now = time.monotonic()
         if self.closed or self.error or now - self.last_time + 1e-9 < self.interval:
             return
         self.last_time = now
         try:
-            self.pending.put_nowait((frame.copy(), dict(row)))
+            self.pending.put_nowait((frame.copy(), dict(row), overhead))
         except queue.Full:
             self.dropped += 1
 
@@ -90,9 +97,15 @@ class DatasetRecorder:
                     item = self.pending.get()
                     if item is None:
                         break
-                    frame, row = item
+                    frame, row, overhead = item
                     row["image"] = "images/{:06d}.png".format(self.count)
                     frame.save(self.path / row["image"], compress_level=1)
+                    if 'overhead_image' in fields:
+                        row['overhead_image'] = ''
+                        row['overhead_valid'] = overhead is not None
+                        if overhead is not None:
+                            row['overhead_image'] = 'overhead_images/{:06d}.jpg'.format(self.count)
+                            (self.path / row['overhead_image']).write_bytes(overhead)
                     writer.writerow(row)
                     handle.flush()
                     self.count += 1

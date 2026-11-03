@@ -46,7 +46,6 @@ class Camera:
                 corners, ids, _ = detector.detectMarkers(frame)
                 markers = []
                 if ids is not None:
-                    cv2.aruco.drawDetectedMarkers(frame, corners, ids)
                     for marker_id, points in zip(ids.flatten(), corners):
                         points = points.reshape(4, 2)
                         markers.append({
@@ -54,12 +53,6 @@ class Camera:
                             "center_pixels": points.mean(axis=0).tolist(),
                             "corners_pixels": points.tolist(),
                         })
-                distance = tag_distance(markers)['distance_pixels']
-                label = '-- px' if distance is None else '{:.1f} px'.format(distance)
-                cv2.putText(frame, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX,
-                            1, (0, 0, 0), 4, cv2.LINE_AA)
-                cv2.putText(frame, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX,
-                            1, (255, 255, 255), 2, cv2.LINE_AA)
                 ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 if not ok:
                     raise RuntimeError("JPEG encoding failed")
