@@ -1,11 +1,12 @@
 import base64
+import asyncio
 import csv
 import io
 import json
 import tempfile
 import time
 import unittest
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 from PIL import Image
 from dataset_recorder import DatasetRecorder
@@ -14,8 +15,9 @@ from wasd_misty import FIELDS, MistyController, command_name, decode_frame, unwr
 
 class MistyTest(unittest.TestCase):
     def test_controls(self):
-        for keys, expected in [({"w"}, (15, 0)), ({"s"}, (-15, 0)),
-                               ({"a"}, (0, 15)), ({"d"}, (0, -15)),
+        for keys, expected in [({"w"}, (25, 0)), ({"s"}, (-25, 0)),
+                               ({"a"}, (0, 30)), ({"d"}, (0, -25)),
+                               ({"w", "a"}, (25, 30)), ({"a", "d"}, (0, 0)),
                                ({"w", "space"}, (0, 0)), ({"w", "s"}, (0, 0))]:
             self.assertEqual(velocities(keys), expected)
         self.assertEqual(command_name((10, 10)), "forward_left")
@@ -52,6 +54,41 @@ class MistyTest(unittest.TestCase):
 
 
 class MistyAsyncTest(unittest.IsolatedAsyncioTestCase):
+    async def test_diagonal_change_during_http_reply_has_no_added_wait(self):
+        controller = MistyController.__new__(MistyController)
+        controller.keys = {'w'}
+        controller.drive_changed = asyncio.Event()
+        controller.running = controller.connected = True
+        controller.last_frame_at = time.monotonic()
+        controller.ack_values = (0, 0)
+        controller.ack_monotonic = 0
+        controller.fail = Mock()
+        calls = []
+        async def send(values):
+            calls.append(values)
+            if len(calls) == 1:
+                # D arrives while the forward request is still awaiting a reply.
+                controller.keys.add('d')
+                controller.drive_changed.set()
+            else:
+                controller.running = False
+            controller.ack_values = values
+            controller.ack_monotonic = time.monotonic()
+        controller.send_drive = send
+        with patch('wasd_misty.asyncio.wait_for', AsyncMock()) as wait:
+            await controller.drive_loop()
+        self.assertEqual(calls, [(25, 0), (25, -25)])
+        wait.assert_not_awaited()
+        controller.fail.assert_not_called()
+
+    async def test_release_wakes_command_loop(self):
+        controller = MistyController.__new__(MistyController)
+        controller.keys = {'w', 'd'}
+        controller.drive_changed = asyncio.Event()
+        controller.release(Mock(keysym='d'))
+        self.assertEqual(controller.keys, {'w'})
+        self.assertTrue(controller.drive_changed.is_set())
+
     async def test_connect_uses_ip_without_serial_gate(self):
         controller = MistyController.__new__(MistyController)
         controller.ip = "192.168.1.38"

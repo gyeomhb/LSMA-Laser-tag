@@ -32,7 +32,8 @@ FIELDS = ["image", "frame_number", "received_unix_s", "keys", "requested_command
 def velocities(keys):
     if "space" in keys:
         return 0, 0
-    return 15 * (("w" in keys) - ("s" in keys)), 15 * (("a" in keys) - ("d" in keys))
+    turn = ("a" in keys) - ("d" in keys)
+    return 25 * (("w" in keys) - ("s" in keys)), (30 if turn > 0 else 25) * turn
 
 
 def command_name(values):
@@ -103,6 +104,7 @@ class MistyController:
         self.camera_label = tk.Label(self.window, text="Waiting for camera...", bg="black", fg="white")
         self.camera_label.pack(fill="both", expand=True, padx=15, pady=15)
         self.keys = set()
+        self.drive_changed = asyncio.Event()
         self.running = True
         self.connected = False
         self.recorder = None
@@ -119,8 +121,8 @@ class MistyController:
         self.session = None
         self.save_tasks = []
         self.window.bind("<KeyPress>", self.press)
-        self.window.bind("<KeyRelease>", lambda e: self.keys.discard(e.keysym.lower()))
-        self.window.bind("<FocusOut>", lambda e: self.keys.clear())
+        self.window.bind("<KeyRelease>", self.release)
+        self.window.bind("<FocusOut>", self.clear_keys)
         self.window.protocol("WM_DELETE_WINDOW", self.close)
 
     def press(self, event):
@@ -138,7 +140,18 @@ class MistyController:
                     self.cozmo_enabled.set(False)
                     self.toggle_cozmo()
             if "space" not in self.keys and self.connected:
+                changed = key not in self.keys
                 self.keys.add(key)
+                if changed:
+                    self.drive_changed.set()
+
+    def release(self, event):
+        self.keys.discard(event.keysym.lower())
+        self.drive_changed.set()
+
+    def clear_keys(self, event=None):
+        self.keys.clear()
+        self.drive_changed.set()
 
     def close(self):
         self.keys.clear()
@@ -210,11 +223,18 @@ class MistyController:
     async def drive_loop(self):
         try:
             while self.running and self.connected:
+                self.drive_changed.clear()
                 # Do not drive blind if camera delivery stops.
                 wanted = velocities(self.keys) if time.monotonic() - self.last_frame_at < 2 else (0, 0)
                 if wanted != self.ack_values or (wanted != (0, 0) and time.monotonic() - self.ack_monotonic > 0.15):
                     await self.send_drive(wanted)
-                await asyncio.sleep(0.02)
+                    # A key may have changed while the HTTP request was pending.
+                    # Re-read it now instead of sleeping after every reply.
+                    continue
+                try:
+                    await asyncio.wait_for(self.drive_changed.wait(), timeout=0.02)
+                except asyncio.TimeoutError:
+                    pass
         except Exception as exc:
             self.fail("Drive connection failed: " + str(exc))
 
@@ -313,7 +333,7 @@ class MistyController:
                 "Quality": 90, "Overlay": False}, timeout=20)
         self.stream_started = True
         self.connected = True
-        self.connection.set("Connected: {} | 15% drive / 15% turn".format(self.ip))
+        self.connection.set("Connected: {} | 25% drive / 30% left / 25% right".format(self.ip))
         self.record_button.configure(state="normal")
         print("Connected to Misty at", self.ip, flush=True)
 
