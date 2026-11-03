@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 from PIL import Image
 from dataset_recorder import DatasetRecorder, COZMO_FIELDS
-from recording_position import POSITION_FIELDS, position_row
+from recording_position import POSITION_FIELDS, position_row, misty_positions
 from wasd_misty import FIELDS
 
 
@@ -21,6 +21,20 @@ class PositionRecordingTests(unittest.TestCase):
     def test_each_robot_gets_own_tag(self):
         self.assertEqual(position_row(self.tracker(), 5)['position_x_px'], 123)
         self.assertEqual(position_row(self.tracker(), 8)['position_x_px'], 456)
+
+    def test_misty_rows_share_one_sample_and_allow_missing_cozmo(self):
+        tracker = self.tracker()
+        row = misty_positions(tracker)
+        tracker.snapshot.assert_called_once()
+        self.assertEqual(row['position_x_px'], 456)
+        self.assertEqual(row['cozmo_position_x_px'], 123)
+        self.assertEqual(row['position_frame_number'], row['cozmo_position_frame_number'])
+        sample, elapsed = tracker.snapshot.return_value
+        sample['markers'] = [sample['markers'][1]]
+        row = misty_positions(tracker)
+        self.assertTrue(row['position_valid'])
+        self.assertFalse(row['cozmo_position_valid'])
+        self.assertEqual(row['cozmo_position_x_px'], '')
 
     def test_unavailable_stale_and_ambiguous_are_blank(self):
         tracker = self.tracker()
@@ -44,7 +58,7 @@ class PositionRecordingTests(unittest.TestCase):
                     recorder.offer(SimpleNamespace(image_number=1, image_recv_time=0,
                                    raw_image=frame), {'w'}, (90, 90), -5, position=row)
                 else:
-                    recorder.offer_frame(frame, dict(row, command='forward'))
+                    recorder.offer_frame(frame, dict(misty_positions(self.tracker()), command='forward'))
                 recorder.close()
                 self.assertIsNone(recorder.error)
                 with (recorder.path/'labels.csv').open(newline='') as handle:
@@ -53,3 +67,6 @@ class PositionRecordingTests(unittest.TestCase):
                 self.assertEqual(saved['position_valid'], 'True')
                 self.assertEqual(float(saved['position_x_px']), row['position_x_px'])
                 self.assertEqual(saved['command'], 'forward')
+                if tag == 8:
+                    self.assertEqual(float(saved['cozmo_position_x_px']), 123)
+                    self.assertEqual(saved['cozmo_position_tag_id'], '5')

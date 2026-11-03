@@ -4,6 +4,7 @@ import math
 
 POSITION_FIELDS = ['position_x_px', 'position_y_px', 'position_valid',
                    'position_tag_id', 'position_age_s', 'position_frame_number']
+COZMO_POSITION_FIELDS = ['cozmo_' + field for field in POSITION_FIELDS]
 POSITION_METADATA = {
     'position_source': 'overhead ArUco tag center',
     'position_units': 'pixels; origin top-left, X right, Y down',
@@ -14,10 +15,20 @@ POSITION_METADATA = {
 
 
 def position_row(tracker, tag):
+    sample, elapsed = tracker.snapshot() if tracker is not None else (None, 0)
+    return position_from_sample(sample, elapsed, tag)
+
+
+def misty_positions(tracker):
+    sample, elapsed = tracker.snapshot() if tracker is not None else (None, 0)
+    row = position_from_sample(sample, elapsed, 8)
+    row.update({'cozmo_' + key: value for key, value in
+                position_from_sample(sample, elapsed, 5).items()})
+    return row
+
+
+def position_from_sample(sample, elapsed, tag):
     row = dict(zip(POSITION_FIELDS, ('', '', False, tag, '', '')))
-    if tracker is None:
-        return row
-    sample, elapsed = tracker.snapshot()
     try:
         if sample.get('error'):
             return row

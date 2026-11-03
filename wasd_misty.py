@@ -18,7 +18,7 @@ import aiohttp
 from PIL import Image, ImageTk
 
 from dataset_recorder import DatasetRecorder
-from recording_position import POSITION_FIELDS, position_row
+from recording_position import POSITION_FIELDS, COZMO_POSITION_FIELDS, misty_positions
 from tracking_panel import DEFAULT_TRACKING_URL, TrackingClient
 from frame_rate import CAMERA_FPS, FrameLimiter
 from robot_startup import preflight, open_misty_camera
@@ -26,7 +26,7 @@ from robot_startup import preflight, open_misty_camera
 DEFAULT_IP = "192.168.1.38"
 FIELDS = ["image", "frame_number", "received_unix_s", "keys", "requested_command",
           "command", "linear_velocity_percent", "angular_velocity_percent",
-          "command_sent_unix_s", "command_ack_unix_s", "command_state"] + POSITION_FIELDS
+          "command_sent_unix_s", "command_ack_unix_s", "command_state"] + POSITION_FIELDS + COZMO_POSITION_FIELDS
 
 
 def velocities(keys):
@@ -240,6 +240,7 @@ class MistyController:
                 "head_angle": "unchanged; not measured",
                 "label_alignment": "Last HTTP-acknowledged command at PC frame receipt. command_state marks transitions and expired timed commands. Not exposure-time synchronization or measured motion.",
                 "stopped_frames_included": True,
+                "position_tags": {"position_": 8, "cozmo_position_": 5},
             }
             try:
                 self.recorder = DatasetRecorder(Path(__file__).parent / "datasets_misty4",
@@ -272,7 +273,7 @@ class MistyController:
                 "command": command_name(self.ack_values), "linear_velocity_percent": self.ack_values[0],
                 "angular_velocity_percent": self.ack_values[1], "command_sent_unix_s": self.sent_time,
                 "command_ack_unix_s": self.ack_time, "command_state": state,
-                **position_row(getattr(self, 'position_tracker', None), 8)}
+                **misty_positions(getattr(self, 'position_tracker', None))}
 
     async def camera_loop(self):
         try:
