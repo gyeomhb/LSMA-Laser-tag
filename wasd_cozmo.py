@@ -8,7 +8,9 @@ from pathlib import Path
 
 import cozmo
 from PIL import Image, ImageTk
-from dataset_recorder import DatasetRecorder
+from dataset_recorder import DatasetRecorder, COZMO_FIELDS
+from recording_position import POSITION_FIELDS, position_row
+from tracking_panel import DEFAULT_TRACKING_URL, TrackingClient
 from frame_rate import CAMERA_FPS, FrameLimiter
 
 
@@ -43,7 +45,8 @@ async def main(robot: cozmo.robot.Robot):
         nonlocal recorder
         if recorder is None:
             try:
-                recorder = DatasetRecorder(Path(__file__).parent / "dataset_cozmo", fps=CAMERA_FPS)
+                recorder = DatasetRecorder(Path(__file__).parent / "dataset_cozmo", fps=CAMERA_FPS,
+                                           fields=COZMO_FIELDS + POSITION_FIELDS)
                 record_button.configure(text="Stop recording")
             except OSError as exc:
                 recording_status.set("Cannot record: " + str(exc))
@@ -66,10 +69,12 @@ async def main(robot: cozmo.robot.Robot):
     camera_view.pack(fill="both", expand=True, padx=20, pady=(0, 20))
     keys = set()
     running = True
+    position_tracker = TrackingClient(DEFAULT_TRACKING_URL)
 
     def on_camera_image(evt, *, image, **kwargs):
         if recorder is not None and running:
-            recorder.offer(image, applied_keys, applied_speeds, robot.head_angle.degrees)
+            recorder.offer(image, applied_keys, applied_speeds, robot.head_angle.degrees,
+                           position=position_row(position_tracker, 5))
 
     camera_handler = robot.world.add_event_handler(cozmo.world.EvtNewCameraImage, on_camera_image)
 
@@ -147,6 +152,7 @@ async def main(robot: cozmo.robot.Robot):
                 if recorder is not None:
                     recorder.close()
             finally:
+                position_tracker.close()
                 window.destroy()
 
 

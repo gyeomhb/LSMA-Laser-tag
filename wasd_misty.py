@@ -18,13 +18,15 @@ import aiohttp
 from PIL import Image, ImageTk
 
 from dataset_recorder import DatasetRecorder
+from recording_position import POSITION_FIELDS, position_row
+from tracking_panel import DEFAULT_TRACKING_URL, TrackingClient
 from frame_rate import CAMERA_FPS, FrameLimiter
 from robot_startup import preflight, open_misty_camera
 
 DEFAULT_IP = "192.168.1.38"
 FIELDS = ["image", "frame_number", "received_unix_s", "keys", "requested_command",
           "command", "linear_velocity_percent", "angular_velocity_percent",
-          "command_sent_unix_s", "command_ack_unix_s", "command_state"]
+          "command_sent_unix_s", "command_ack_unix_s", "command_state"] + POSITION_FIELDS
 
 
 def velocities(keys):
@@ -269,7 +271,8 @@ class MistyController:
                 "keys": "+".join(sorted(self.keys)), "requested_command": command_name(velocities(self.keys)),
                 "command": command_name(self.ack_values), "linear_velocity_percent": self.ack_values[0],
                 "angular_velocity_percent": self.ack_values[1], "command_sent_unix_s": self.sent_time,
-                "command_ack_unix_s": self.ack_time, "command_state": state}
+                "command_ack_unix_s": self.ack_time, "command_state": state,
+                **position_row(getattr(self, 'position_tracker', None), 8)}
 
     async def camera_loop(self):
         try:
@@ -315,6 +318,7 @@ class MistyController:
 
     async def run(self):
         tasks = []
+        self.position_tracker = TrackingClient(DEFAULT_TRACKING_URL)
         shown = None
         preview_rate = FrameLimiter()
         async with aiohttp.ClientSession(trust_env=False) as self.session:
@@ -371,6 +375,7 @@ class MistyController:
                 if self.recorder is not None:
                     await asyncio.get_running_loop().run_in_executor(None, self.recorder.close)
                 await asyncio.gather(*self.save_tasks, return_exceptions=True)
+                self.position_tracker.close()
                 self.window.destroy()
 
 

@@ -6,7 +6,11 @@ from pathlib import Path
 import queue
 import threading
 import time
+from recording_position import POSITION_METADATA
 from datetime import datetime, timezone
+
+COZMO_FIELDS = ["image", "image_number", "image_received_unix_s", "label_sampled_unix_s",
+                "keys", "command", "left_wheel_mmps", "right_wheel_mmps", "head_angle_degrees"]
 
 
 def command_name(speeds):
@@ -45,11 +49,14 @@ class DatasetRecorder:
             "stopped_frames_included": True,
             "wheel_speed_units": "mm/s",
         }
+        if fields and 'position_x_px' in fields:
+            metadata = dict(metadata, **POSITION_METADATA)
+            metadata['schema_version'] = 2
         (self.path / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         self.thread = threading.Thread(target=self._write, daemon=True)
         self.thread.start()
 
-    def offer(self, image, keys, speeds, head_angle):
+    def offer(self, image, keys, speeds, head_angle, position=None):
         row = {
             "image": "", "image_number": image.image_number,
             "image_received_unix_s": image.image_recv_time,
@@ -58,6 +65,8 @@ class DatasetRecorder:
             "left_wheel_mmps": speeds[0], "right_wheel_mmps": speeds[1],
             "head_angle_degrees": head_angle,
         }
+        if position is not None:
+            row.update(position)
         self.offer_frame(image.raw_image, row)
 
     def offer_frame(self, frame, row):
@@ -71,8 +80,7 @@ class DatasetRecorder:
             self.dropped += 1
 
     def _write(self):
-        fields = self.fields or ["image", "image_number", "image_received_unix_s", "label_sampled_unix_s",
-                  "keys", "command", "left_wheel_mmps", "right_wheel_mmps", "head_angle_degrees"]
+        fields = self.fields or COZMO_FIELDS
         try:
             with (self.path / "labels.csv").open("w", newline="", encoding="utf-8") as handle:
                 writer = csv.DictWriter(handle, fieldnames=fields)

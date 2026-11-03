@@ -11,23 +11,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cv2
-
-
-def draw_boundaries(frame):
-    """Display Cozmo's movement area after marker detection (pixel coordinates)."""
-    color = (0, 220, 255)
-    cv2.rectangle(frame, (50, 50), (1000, 600), (0, 0, 0), 5)
-    cv2.rectangle(frame, (50, 50), (1000, 600), color, 2)
-    for text, position in [
-        ("Cozmo boundary: X 50-1000 | Y 50-600", (50, 35)),
-        ("(50, 50)", (58, 72)),
-        ("(1000, 600)", (850, 590)),
-    ]:
-        cv2.putText(frame, text, position, cv2.FONT_HERSHEY_SIMPLEX,
-                    0.65, (0, 0, 0), 4, cv2.LINE_AA)
-        cv2.putText(frame, text, position, cv2.FONT_HERSHEY_SIMPLEX,
-                    0.65, color, 1, cv2.LINE_AA)
-
+from tag_distance import tag_distance
 
 class Camera:
     def __init__(self, device):
@@ -70,7 +54,12 @@ class Camera:
                             "center_pixels": points.mean(axis=0).tolist(),
                             "corners_pixels": points.tolist(),
                         })
-                draw_boundaries(frame)
+                distance = tag_distance(markers)['distance_pixels']
+                label = '-- px' if distance is None else '{:.1f} px'.format(distance)
+                cv2.putText(frame, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX,
+                            1, (0, 0, 0), 4, cv2.LINE_AA)
+                cv2.putText(frame, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX,
+                            1, (255, 255, 255), 2, cv2.LINE_AA)
                 ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 if not ok:
                     raise RuntimeError("JPEG encoding failed")
@@ -94,6 +83,7 @@ class Camera:
                 "frame_number": self.sequence, "received_unix_s": self.timestamp,
                 "dictionary": "DICT_4X4_50", "coordinates": "image pixels, not 3D pose",
                 "markers": self.markers, "error": self.error,
+                "tag_distance": tag_distance(self.markers),
                 "frame_age_seconds": None if self.timestamp is None else time.time() - self.timestamp,
             }
 
